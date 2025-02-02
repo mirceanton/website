@@ -1,2 +1,10 @@
 [tools]
 node = "latest"
+uv = "latest"
+
+github-cli = "latest"
+
+# Linters
+actionlint = "latest"
+yamllint = "latest"
+markdownlint-cli2 = "latest"
