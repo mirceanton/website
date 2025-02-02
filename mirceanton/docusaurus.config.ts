@@ -2,30 +2,20 @@ import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
-// This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
-
 const config: Config = {
-  title: 'My Site',
-  tagline: 'Dinosaurs are cool',
+  title: 'Mircea Anton',
+  tagline: 'DevOps by day, HomeOps by night!',
   favicon: 'img/favicon.ico',
 
-  // Set the production url of your site here
-  url: 'https://your-docusaurus-site.example.com',
-  // Set the /<baseUrl>/ pathname under which your site is served
-  // For GitHub pages deployment, it is often '/<projectName>/'
+  url: 'https://mirceanton.com',
   baseUrl: '/',
 
-  // GitHub pages deployment config.
-  // If you aren't using GitHub pages, you don't need these.
-  organizationName: 'facebook', // Usually your GitHub org/user name.
-  projectName: 'docusaurus', // Usually your repo name.
+  organizationName: 'mirceanton', 
+  projectName: 'website',
 
   onBrokenLinks: 'throw',
   onBrokenMarkdownLinks: 'warn',
 
-  // Even if you don't use internationalization, you can use this field to set
-  // useful metadata like html lang. For example, if your site is Chinese, you
-  // may want to replace "en" with "zh-Hans".
   i18n: {
     defaultLocale: 'en',
     locales: ['en'],
@@ -37,22 +27,21 @@ const config: Config = {
       {
         docs: {
           sidebarPath: './sidebars.ts',
-          // Please change this to your repo.
-          // Remove this to remove the "edit this page" links.
-          editUrl:
-            'https://github.com/facebook/docusaurus/tree/main/packages/create-docusaurus/templates/shared/',
+          editUrl: 'https://github.com/mirceanton/website/mirceanton'
         },
         blog: {
+          routeBasePath: "/",
+          tagsBasePath: "/tags",
+          archiveBasePath: "/archive",
+          authorsBasePath: "/authors",
+          blogSidebarTitle: "Recent Posts:",
           showReadingTime: true,
+          // showLastUpdateAuthor: true,
           feedOptions: {
             type: ['rss', 'atom'],
             xslt: true,
           },
-          // Please change this to your repo.
-          // Remove this to remove the "edit this page" links.
-          editUrl:
-            'https://github.com/facebook/docusaurus/tree/main/packages/create-docusaurus/templates/shared/',
-          // Useful options to enforce blogging best practices
+          editUrl: 'https://github.com/mirceanton/website/mirceanton',
           onInlineTags: 'warn',
           onInlineAuthors: 'warn',
           onUntruncatedBlogPosts: 'warn',
@@ -65,22 +54,18 @@ const config: Config = {
   ],
 
   themeConfig: {
-    // Replace with your project's social card
-    image: 'img/docusaurus-social-card.jpg',
+    image: 'img/banner.png',
+
     navbar: {
-      title: 'My Site',
+      title: 'Mircea Anton',
+      hideOnScroll: true,
       logo: {
-        alt: 'My Site Logo',
-        src: 'img/logo.svg',
+        alt: 'mirceanton Logo',
+        src: 'img/icon.png',
       },
       items: [
-        {
-          type: 'docSidebar',
-          sidebarId: 'tutorialSidebar',
-          position: 'left',
-          label: 'Tutorial',
-        },
         {to: '/blog', label: 'Blog', position: 'left'},
+        {to: '/docs/intro', label: 'Docs', position: 'left'},
         {
           href: 'https://github.com/facebook/docusaurus',
           label: 'GitHub',
@@ -88,11 +73,12 @@ const config: Config = {
         },
       ],
     },
+
     footer: {
-      style: 'dark',
+      style: "light",
       links: [
         {
-          title: 'Docs',
+          title: 'Projects',
           items: [
             {
               label: 'Tutorial',
@@ -131,11 +117,17 @@ const config: Config = {
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} My Project, Inc. Built with Docusaurus.`,
+      logo: {
+        alt: 'mirceanton text logo',
+        src: 'img/footer.png',
+        href: 'https://mirceanton.com',
+      },
+      copyright: `© ${new Date().getFullYear()} <b>Mircea-Pavel Anton</b> Some rights reserved`,
     },
+
     prism: {
-      theme: prismThemes.github,
-      darkTheme: prismThemes.dracula,
+      theme: prismThemes.gruvboxMaterialLight,
+      darkTheme: prismThemes.gruvboxMaterialDark,
     },
   } satisfies Preset.ThemeConfig,
 };
