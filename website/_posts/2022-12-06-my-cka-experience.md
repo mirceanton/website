@@ -2,8 +2,7 @@
 title: My CKA Experience
 description: Ready to take on the CKA? Here's how I prepared and passed the exam
 tags:
-  - kubernetes
-  - ertification
+  - certification
 image:
   path: /assets/img/posts/2022-12-06-my-cka-experience/featured.webp
   lqip: /assets/img/posts/2022-12-06-my-cka-experience/featured_lqip.webp

@@ -2,7 +2,6 @@
 title:  My (terrible) CKAD Experience
 description: "PSA on PSI: A Terrible Experience"
 tags:
-  - kubernetes
   - certification
 image:
   path: /assets/img/posts/2022-12-13-my-ckad-experience/featured.webp

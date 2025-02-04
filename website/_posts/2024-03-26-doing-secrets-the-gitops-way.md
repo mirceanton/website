@@ -2,8 +2,8 @@
 title: Doing Secrets The GitOps Way
 description: Storing secrets in Git is generally a bad practice... Unless you encrypt them.
 tags:
+  - git
   - gitops
-  - security
   - sops
   - age
 

@@ -2,9 +2,7 @@
 title: My CKS Experience
 description: Secure your cluster and your career with the CKS exam
 tags:
-  - kubernetes
   - certification
-  - security
 image:
   path: /assets/img/posts/2022-12-20-my-cks-experience/featured.webp
   lqip: /assets/img/posts/2022-12-20-my-cks-experience/featured_lqip.webp

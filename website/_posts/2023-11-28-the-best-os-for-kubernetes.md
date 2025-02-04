@@ -2,7 +2,7 @@
 title: The Best OS For Kubernetes
 description: If you're not using Talos Linux for Kubernetes, you're (probably) doing it wrong. Here’s why.
 tags:
-  - Kubernetes
+  - kubernetes
   - talos_linux
 
 # img_path: /assets/img/posts/2023-11-28-the-best-os-for-kubernetes/
