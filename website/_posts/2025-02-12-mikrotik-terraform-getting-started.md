@@ -10,294 +10,167 @@ image:
 date: 2025-02-12
 ---
 
+After much ado and months of procrastination, we're finally here! In this blog post we're gonna be getting started with our Terraform-Mikrotik network automation. The goals for this one are not overly ambitious, but that's not to say they're not important. What I'm setting out to achieve is:
 
-## Getting Started
+1. Connecting Terraform to Mikrotik,
+2. Importing the default Mikrotik configuration that comes with my RB5009 into Terraform,
+3. Making the *least* amount of changes necessary to get internet access.
 
-When it comes to onboarding your router under Terraform, there are two main approaches, both having their own advantages and disadvantages. You can either:
+Again, this might not seem like much, but it will be a very solid base for our network automation. At the end of this post, my entire Mikrotik router will be terraform-managed!
 
-1. Start from scratch by resetting your router with **no** default configuration;
-2. Start from the default configuration and work your way up from there.
+## Setting up our Dev Environment
 
-Starting from scratch might sound like a good idea since you get a headstart in managing everything using Terraform. It requires more careful planning, however, since it also means you will not have any internet access until you have configured your router. This means you will not be able to, for example, pull terraform providers or modules or push your state file to a remote backend.
+The prerequisites for this one are super light. All we really need is to have the terraform CLI installed. If you haven't installed it yet, you can follow the official [installation guide](https://developer.hashicorp.com/terraform/tutorials/aws-get-started/install-cli) or use whatever package manager you fancy.
 
+For this tutorial, I will once more be using [`mise`](https://mise.jdx.dev/) to manage my dev tools:
 
-## Default Configuration
-
-### Ethernet Interfaces
-
-```terraform
-# =================================================================================================
-# Ethernet Interfaces
-# https://registry.terraform.io/providers/terraform-routeros/routeros/latest/docs/resources/interface_ethernet
-# =================================================================================================
-resource "routeros_interface_ethernet" "wan" {
-  factory_name = "ether1"
-  name         = "ether1"
-  comment      = "Digi Uplink (PPPoE)"
-  l2mtu        = 1514
-}
-
-resource "routeros_interface_ethernet" "living_room" {
-  factory_name = "ether2"
-  name         = "ether2"
-  comment      = "Living Room Switch"
-  l2mtu        = 1514
-}
-
-resource "routeros_interface_ethernet" "sploinkhole" {
-  factory_name = "ether3"
-  name         = "ether3"
-  comment      = "Sploinkhole"
-  l2mtu        = 1514
-}
-
-resource "routeros_interface_ethernet" "ether4" {
-  factory_name = "ether4"
-  name         = "ether4"
-  disabled     = true
-}
-
-resource "routeros_interface_ethernet" "ether5" {
-  factory_name = "ether5"
-  name         = "ether5"
-  disabled     = true
-}
-
-resource "routeros_interface_ethernet" "ether6" {
-  factory_name = "ether6"
-  name         = "ether6"
-  disabled     = true
-}
-
-resource "routeros_interface_ethernet" "ether7" {
-  factory_name = "ether7"
-  name         = "ether7"
-  disabled     = true
-}
-
-resource "routeros_interface_ethernet" "access_point" {
-  factory_name = "ether8"
-  name         = "ether8"
-  comment      = "cAP AX"
-  l2mtu        = 1514
-}
-
-resource "routeros_interface_ethernet" "sfp-sfpplus1" {
-  factory_name             = "sfp-sfpplus1"
-  name                     = "sfp-sfpplus1"
-  disabled                 = true
-  sfp_shutdown_temperature = 90
-}
+```bash
+Workspace/terraform/mikrotik-demo
+❯ mise use aqua:hashicorp/terraform
+mise ~/Workspace/terraform/mikrotik-demo/mise.toml tools: aqua:hashicorp/terraform@1.10.5
 ```
 
-### Default Bridge
+The important thing for this section is to be able to run terraform commands. You should be able to run `terraform version` and see some output similar to this:
 
-```terraform
-# =================================================================================================
-# Bridge Interfaces
-# https://registry.terraform.io/providers/terraform-routeros/routeros/latest/docs/resources/interface_bridge
-# =================================================================================================
-resource "routeros_interface_bridge" "bridge" {
-  name           = "bridge"
-  comment        = ""
-  disabled       = false
-  vlan_filtering = true
-}
+```bash
+Workspace/terraform/mikrotik-demo via 💠 default 
+❯ terraform version
+Terraform v1.10.5
 ```
 
-### Bridge Ports
+## Connecting Terraform to Mikrotik
+
+Now that terraform is all set up, we need to install the RouterOS provider and connect it to our Mikrotik device.
+
+### Installing the Provider
+
+The provider we're going to use is [terraform-routeros](https://registry.terraform.io/providers/terraform-routeros/routeros/latest). We're going to install the latest version which, at the time of writing, is `1.76.3`. To do that, I typically create a `providers.tf` file in the root of my project and configure the `required_providers` block there:
 
 ```terraform
-# =================================================================================================
-# Bridge Ports
-# https://registry.terraform.io/providers/terraform-routeros/routeros/latest/docs/resources/interfa
-# =================================================================================================ce_bridge_port
-resource "routeros_interface_bridge_port" "living_room" {
-  bridge    = routeros_interface_bridge.bridge.name
-  interface = routeros_interface_ethernet.living_room.name
-  comment   = routeros_interface_ethernet.living_room.comment
-  pvid      = "1"
-}
-resource "routeros_interface_bridge_port" "sploinkhole" {
-  bridge    = routeros_interface_bridge.bridge.name
-  interface = routeros_interface_ethernet.sploinkhole.name
-  comment   = routeros_interface_ethernet.sploinkhole.comment
-  pvid      = routeros_interface_vlan.trusted.vlan_id
-}
-resource "routeros_interface_bridge_port" "access_point" {
-  bridge    = routeros_interface_bridge.bridge.name
-  interface = routeros_interface_ethernet.access_point.name
-  comment   = routeros_interface_ethernet.access_point.comment
-  pvid      = routeros_interface_vlan.servers.vlan_id
+terraform {
+  required_providers {
+    routeros = {
+      source  = "terraform-routeros/routeros"
+      version = "1.76.0"
+    }
+  }
 }
 ```
+{: file='provider.tf'}
 
-### Interface Lists
+With that in place, we need to tell terraform to download and set up that provider. Basically, we need to initialize our workspace. To do that, we need to run the `terraform init` command:
+
+```bash
+Workspace/terraform/mikrotik-demo via 💠 default 
+❯ terraform init
+Initializing the backend...
+Initializing provider plugins...
+- Finding terraform-routeros/routeros versions matching "1.76.0"...
+- Installing terraform-routeros/routeros v1.76.0...
+- Installed terraform-routeros/routeros v1.76.0 (self-signed, key ID 45571F2D7311B119)
+Partner and community providers are signed by their developers.
+If you'd like to know more about provider signing, you can read about it here:
+https://www.terraform.io/docs/cli/plugins/signing.html
+Terraform has created a lock file .terraform.lock.hcl to record the provider
+selections it made above. Include this file in your version control repository
+so that Terraform can guarantee to make the same selections by default when
+you run "terraform init" in the future.
+
+Terraform has been successfully initialized!
+
+You may now begin working with Terraform. Try running "terraform plan" to see
+any changes that are required for your infrastructure. All Terraform commands
+should now work.
+
+If you ever set or change modules or backend configuration for Terraform,
+rerun this command to reinitialize your working directory. If you forget, other
+commands will detect it and remind you to do so if necessary.
+```
+
+### Configuring the Provider
+
+With the provider installed, we need to configure it to basically tell it at which IP address it can find our router and the credentials it needs to use to authenticate. This is done by adding a `provider` block with the required parameters which you can find in the [official documentation](https://registry.terraform.io/providers/terraform-routeros/routeros/latest/docs#example-usage) of the provider.
+
+> By default, Mikrotik routers use an IP of `192.168.88.1` and a username of `admin`.  
+> Depending on your model, the password *might* be blank or it *might* be randomized. If it's blank, well... you'll know. If it's randomized, it will be written on your device, on the label next to the serial number and whatnot.
+{: .prompt-info }
+
+I typically dump that config in my `providers.tf` file as well:
 
 ```terraform
-# ================================================================================================
-# Interface Lists
-# https://registry.terraform.io/providers/terraform-routeros/routeros/latest/docs/resources/interface_list
-# ================================================================================================
-resource "routeros_interface_list" "wan" {
-  name    = "WAN"
-  comment = "All Public-Facing Interfaces"
-}
-resource "routeros_interface_list" "lan" {
-  name    = "LAN"
-  comment = "All Local Interfaces"
+# ...
+provider "routeros" {
+  hosturl  = var.mikrotik_host_url
+  username = var.mikrotik_username
+  password = var.mikrotik_password
+  insecure = var.mikrotik_insecure
 }
 ```
+{: file='provider.tf'}
 
-### Firewall Rules
+You can see here that I defined variables for all these connection parameters instead of hardcoding them in. You *can* do that if you want to (put your credentials in there), but I don't really recommend to, especially if you intend to push this code to git eventually.
+
+To be able to use these variables, we need to first define them:
 
 ```terraform
-# =================================================================================================
-# Firewall Rules
-# https://registry.terraform.io/providers/terraform-routeros/routeros/latest/docs/resources/ip_firewall_filter
-# =================================================================================================
-resource "routeros_ip_firewall_filter" "accept_established_related_untracked" {
-  action           = "accept"
-  chain            = "input"
-  comment          = "accept established, related, untracked"
-  connection_state = "established,related,untracked"
-  place_before     = routeros_ip_firewall_filter.drop_invalid.id
+variable "mikrotik_host_url" {
+  type        = string
+  sensitive   = false
+  description = "The URL of the MikroTik device."
 }
 
-resource "routeros_ip_firewall_filter" "drop_invalid" {
-  action           = "drop"
-  chain            = "input"
-  comment          = "drop invalid"
-  connection_state = "invalid"
-  place_before     = routeros_ip_firewall_filter.accept_icmp.id
+variable "mikrotik_username" {
+  type        = string
+  sensitive   = true
+  description = "The username for accessing the MikroTik device."
 }
 
-resource "routeros_ip_firewall_filter" "accept_icmp" {
-  action       = "accept"
-  chain        = "input"
-  comment      = "accept ICMP"
-  protocol     = "icmp"
-  place_before = routeros_ip_firewall_filter.capsman_accept_local_loopback.id
+variable "mikrotik_password" {
+  type        = string
+  sensitive   = true
+  description = "The password for accessing the MikroTik device."
 }
 
-resource "routeros_ip_firewall_filter" "capsman_accept_local_loopback" {
-  action       = "accept"
-  chain        = "input"
-  comment      = "accept to local loopback for capsman"
-  dst_address  = "127.0.0.1"
-  place_before = routeros_ip_firewall_filter.drop_all_not_lan.id
-}
-
-resource "routeros_ip_firewall_filter" "drop_all_not_lan" {
-  action            = "drop"
-  chain             = "input"
-  comment           = "drop all not coming from LAN"
-  in_interface_list = "!LAN"
-  place_before      = routeros_ip_firewall_filter.accept_ipsec_policy_in.id
-}
-
-resource "routeros_ip_firewall_filter" "accept_ipsec_policy_in" {
-  action       = "accept"
-  chain        = "forward"
-  comment      = "accept in ipsec policy"
-  ipsec_policy = "in,ipsec"
-  place_before = routeros_ip_firewall_filter.accept_ipsec_policy_out.id
-}
-
-resource "routeros_ip_firewall_filter" "accept_ipsec_policy_out" {
-  action       = "accept"
-  chain        = "forward"
-  comment      = "accept out ipsec policy"
-  ipsec_policy = "out,ipsec"
-  place_before = routeros_ip_firewall_filter.fasttrack_connection.id
-}
-
-resource "routeros_ip_firewall_filter" "fasttrack_connection" {
-  action           = "fasttrack-connection"
-  chain            = "forward"
-  comment          = "fasttrack"
-  connection_state = "established,related"
-  hw_offload       = "true"
-  place_before     = routeros_ip_firewall_filter.accept_established_related_untracked_forward.id
-}
-
-resource "routeros_ip_firewall_filter" "accept_established_related_untracked_forward" {
-  action           = "accept"
-  chain            = "forward"
-  comment          = "accept established, related, untracked"
-  connection_state = "established,related,untracked"
-  place_before     = routeros_ip_firewall_filter.drop_invalid_forward.id
-}
-
-resource "routeros_ip_firewall_filter" "drop_invalid_forward" {
-  action           = "drop"
-  chain            = "forward"
-  comment          = "drop invalid"
-  connection_state = "invalid"
-  place_before     = routeros_ip_firewall_filter.drop_all_wan_not_dstnat.id
-}
-
-resource "routeros_ip_firewall_filter" "drop_all_wan_not_dstnat" {
-  action               = "drop"
-  chain                = "forward"
-  comment              = "drop all from WAN not DSTNATed"
-  connection_nat_state = "!dstnat"
-  connection_state     = "new"
-  in_interface_list    = "WAN"
+variable "mikrotik_insecure" {
+  type        = bool
+  default     = true
+  description = "Whether to allow insecure connections to the MikroTik device."
 }
 ```
+{: file='variables.tf'}
 
-### NAT
+And now we need to tell terraform what the values for these variables actually are. I typically create a `credentials.auto.tfvars` file and make sure to `gitignore` it.
+
+Another note here is that while you can continue using the `admin` user, it is best practice to log in and create a dedicated user for terraform. I personally created mine with full administrative rights:
 
 ```terraform
-# =================================================================================================
-# NAT Rules
-# https://registry.terraform.io/providers/terraform-routeros/routeros/latest/docs/resources/ip_firewall_nat
-# =================================================================================================
-resource "routeros_ip_firewall_nat" "wan" {
-  comment            = "WAN masquerade"
-  chain              = "srcnat"
-  out_interface_list = "WAN"
-  action             = "masquerade"
-}
+mikrotik_host_url = "https://192.168.88.1"
+mikrotik_username = "terraform"
+mikrotik_password = "terr4f0rm"
+mikrotik_insecure = true
+```
+{: file='credentials.auto.tfvars'}
+
+### Validating the Connection
+
+At this point we should be all set up and ready to go. We can run `terraform apply` to validate the connection to our Mikrotik router:
+
+```bash
+Workspace/terraform/mikrotik-demo via 💠 default 
+❯ terraform apply
+
+No changes. Your infrastructure matches the configuration.
+
+Terraform has compared your real infrastructure against your configuration and found no
+differences, so no changes are needed.
+
+Apply complete! Resources: 0 added, 0 changed, 0 destroyed.
 ```
 
-### PPPoE Client for WAN
+If you see output similar to the above, then it means terraform has successfully connected to your Mikrotik device, and you're ready to move on to the next steps!
 
-```terraform
-# =================================================================================================
-# PPPoE Client
-# https://registry.terraform.io/providers/terraform-routeros/routeros/latest/docs/resources/interface_pppoe_client
-# =================================================================================================
-resource "routeros_interface_pppoe_client" "digi" {
-  interface         = routeros_interface_ethernet.wan.name
-  name              = "PPPoE-Digi"
-  comment           = "Digi PPPoE Client"
-  add_default_route = true
-  use_peer_dns      = false
-  password          = var.digi_pppoe_password
-  user              = var.digi_pppoe_username
-}
-```
+## Importing the Default Configuration
 
-### What about IPv6?
-
-I'm going to get a lot of hate for this, but I'm going to keep it simple and just disable IPv6 on the router...
-
-```terraform
-# =================================================================================================
-# IPv6 Settings
-# https://registry.terraform.io/providers/terraform-routeros/routeros/latest/docs/resources/ipv6_settings
-# =================================================================================================
-resource "routeros_ipv6_settings" "disable" {
-  disable_ipv6 = "true"
-}
-```
+## Modifying the Default Configuration
 
 ## Next Steps
-
-I'm going to continue working on this setup and will add more resources as I go. If you have any questions or need further assistance, feel free to reach out! 
-
----
-
-Happy Terraforming! 🚀
