@@ -32,14 +32,8 @@ If you want to follow along you don't really need much for this one:
   IYou can follow the official [installation guide](https://developer.hashicorp.com/terraform/tutorials/aws-get-started/install-cli) or use whatever package manager you fancy.
   For this tutorial, I will once more be using [`mise`](https://mise.jdx.dev/) to manage my dev tools:
 
-  ```bash
-  ❯ mise use aqua:hashicorp/terraform
-  mise ~/Workspace/terraform/mikrotik-demo/mise.toml tools: aqua:hashicorp/terraform@1.10.5
-
-  ❯ terraform version
-  Terraform v1.10.5
-  on linux_amd64
-  ```
+  ![mise install terraform](/assets/img/posts/2025-02-12-mikrotik-terraform-getting-started/mise-install-terraform.webp)
+  _the output of `mise use terraform`_
 
 ## Connecting Terraform to Mikrotik
 
@@ -63,31 +57,8 @@ terraform {
 
 With that in place, I can now initialize the workspace to pull down the provider and install it:
 
-```bash
-❯ terraform init
-Initializing the backend...
-Initializing provider plugins...
-- Finding terraform-routeros/routeros versions matching "1.76.0"...
-- Installing terraform-routeros/routeros v1.76.0...
-- Installed terraform-routeros/routeros v1.76.0 (self-signed, key ID 45571F2D7311B119)
-Partner and community providers are signed by their developers.
-If you'd like to know more about provider signing, you can read about it here:
-https://www.terraform.io/docs/cli/plugins/signing.html
-Terraform has created a lock file .terraform.lock.hcl to record the provider
-selections it made above. Include this file in your version control repository
-so that Terraform can guarantee to make the same selections by default when
-you run "terraform init" in the future.
-
-Terraform has been successfully initialized!
-
-You may now begin working with Terraform. Try running "terraform plan" to see
-any changes that are required for your infrastructure. All Terraform commands
-should now work.
-
-If you ever set or change modules or backend configuration for Terraform,
-rerun this command to reinitialize your working directory. If you forget, other
-commands will detect it and remind you to do so if necessary.
-```
+![terraform init](/assets/img/posts/2025-02-12-mikrotik-terraform-getting-started/terraform-init.png)
+_Initializing the Terraform workspace_
 
 ### Provider Configuration
 
@@ -153,18 +124,71 @@ mikrotik_insecure = true
 
 ### Validating the Connection
 
-At this point everything should be all set up and ready to go. To test that, I can run `terraform apply` to validate the connection to my Mikrotik router:
+At this point everything should be all set up and ready to go... Or so I thought. I'll need to first create a dummy resource - say a test file - to make sure commands are sent properly to the RouterOS API:
 
-```bash
-❯ terraform apply
-
-No changes. Your infrastructure matches the configuration.
-
-Terraform has compared your real infrastructure against your configuration and found no
-differences, so no changes are needed.
-
-Apply complete! Resources: 0 added, 0 changed, 0 destroyed.
+```terraform
+resource "routeros_file" "test" {
+  name     = "test"
+  contents = "This is a test"
+}
 ```
+
+With all this in place, I should be able to run `terraform apply` and see some successful output, right?
+
+![terraform apply failure](/assets/img/posts/2025-02-12-mikrotik-terraform-getting-started/terraform-apply-failure.png)
+_`terraform apply` failure_
+
+I'll spare you the details and the troubleshooting time. It's certificates... It's always certificates... Unless it's DNS, of course, but if it's not DNS it's definitely certificates 😅
+
+### RouterOS Setup
+
+Terraform connects to my router via the API, which is the `www-ssl` service, not to be confounded with the `api` or `api-ssl` services. No no no no no. `www-ssl` is actually the newer REST API service whereas, if I understand correctly, `api` and `api-ssl` are older versions.
+
+Thus, before Terraform can connect to my router, I need to ensure that the `www-ssl` service is properly configured. By default, RouterOS doesn't enable this service and, more importantly, it doesn't have a certificate bound to it. The solution is simple, then. I just need to:
+
+1. Create a self-signed certificate authority
+2. Generate a certificate for the web interface
+3. Bind that certificate to the `www-ssl` service
+4. Enable the service
+5. Profit???
+
+Long story short, here are the commands I needed to run on my router to set all these up:
+
+```sh
+# Create a local root certificate
+[admin@MikroTik] > /certificate/add name=local-root-cert common-name=local-cert key-size=prime256v1 key-usage=key-cert-sign,crl-sign trusted=yes
+
+# Sign the root certificate
+[admin@MikroTik] > /certificate/sign local-root-cert
+
+ progress: done
+
+# Create a certificate for the web interface
+[admin@MikroTik] > /certificate/add name=webfig common-name=192.168.88.1 country=RO locality=BUC organization=MIRCEANTON unit=HOME days-valid=3650 key-size=prime256v1 key-usage=key-cert-sign,crl-sign,digital-signature,key-agreement,tls-server trusted=yes
+
+# Sign the web interface certificate using our local CA
+[admin@MikroTik] > /certificate/sign ca=local-root-cert webfig
+
+ progress: done
+
+# Bind the certificate to the www-ssl service and configure it
+[admin@MikroTik] > /ip/service/set www-ssl certificate=webfig disabled=no
+
+# Enable the www-ssl service
+[admin@MikroTik] > /ip/service/enable www-ssl
+```
+
+I don't actually recommend copy-pasting these commands as they are rather specific to my setup. You can see the `organization` I set to `mirceanton` and so on. Take the extra 30 seconds to customize these commands to suit your setup before running them!
+
+> Note: Since we're using a self-signed certificate, you'll need to set `insecure = true` in your Terraform provider configuration, as we've already done in our setup.
+{: .prompt-info }
+
+### Validating the Connection (again)
+
+At this point everything should be all set up and ready to go. For real this time! To test that, I will run `terraform plan` once again:
+
+![terraform apply working](/assets/img/posts/2025-02-12-mikrotik-terraform-getting-started/terraform-apply-working.png)
+_`terraform plan` fixed_
 
 If you see output similar to the above, then it means terraform has successfully connected to your Mikrotik device, and you're ready to move on to the next steps!
 
@@ -181,18 +205,15 @@ To be honest, I am fairly new to mikrotik devices in general, so I want to take 
 
 For now, let's take a quick look at the default configuration that came with my RB5009. I won't drop the entire `export` here. You can find in in [this gist](https://gist.github.com/mircea-pavel-anton/11852c0978c974d36ce0e28945878ef8). I'll take things step by step and see how Mikrotik config translates into terraform resources.
 
+### Certificate
+
+### IP Services
+
 ### Bridge Interface
 
 By default, Mikrotik creates **one bridge interface per switch chip** in your device. As far as I understand, this is due to performance optimizations since only one bridge per switch chip can take advantage of hardware acceleration. There's nothing stopping you from creating more, just know that it will likely perform poorly since traffic between them will be processed by the CPU instead of the switch chip.
 
-Since my RB5009 has only one switch chip, it has one default bridge called... well... `bridge` 😅:
-
-```sh
-/interface bridge
-add admin-mac=48:A9:8A:BD:AB:D5 auto-mac=no comment=defconf name=bridge
-```
-
-I can define this bridge as a terraform resource like so (note that I don't include the "defconf" comments):
+Since my RB5009 has only one switch chip, it has one default bridge called... well... `bridge` 😅. I can define this bridge as a terraform resource like so (note that I don't include the "defconf" comments):
 
 ```terraform
 resource "routeros_interface_bridge" "bridge" {
@@ -202,36 +223,21 @@ resource "routeros_interface_bridge" "bridge" {
 ```
 {: file='bridge.tf'}
 
-If I were to apply this right now, however, the operation would fail. Terraform would send the request to the ROS API to create a new bridge and ROS will complain saying that a bridge like that already exists. This is expected behavior, really, since it can't automatically detect that I want to take over some already existing config and not create some new resource.
+If I were to apply this right now, however, the operation would fail. Terraform would send the request to the ROS API to create a new bridge and ROS will complain saying that a bridge like that already exists.
 
-To fix thatm I need to **import** that bridge in my config. This can be done either manually by running a `terraform import` command, or by adding an `import` block in my terraform config.
+Believe it or not, this is expected behavior. Terraform can't automatically detect that I want to take over some already existing config and not create some new resource.
+
+To fix that, I need to **import** that bridge in my config. This can be done either manually by running a `terraform import` command, or by adding an `import` block in my terraform config.
 
 Regardless of which option I choose, I firstly need to get the ID of that bridge, so let's go ahead and do that:
 
-```sh
-[admin@Mikrotik] > :put [/interface/bridge get [print show-ids]]
-Flags: X - disabled, R - running 
-*B R name="bridge" mtu=auto actual-mtu=1500 l2mtu=1514 arp=enabled arp-timeout=auto mac-address=48:A9:8A:BD:AB:D5 protocol-mode=rstp 
-     fast-forward=yes igmp-snooping=no auto-mac=no admin-mac= ageing-time=5m priority=0x8000 max-message-age=20s 
-     forward-delay=15s transmit-hold-count=6 vlan-filtering=yes ether-type=0x8100 pvid=1 frame-types=admit-all ingress-filtering=yes 
-     dhcp-snooping=no port-cost-mode=long mvrp=no max-learned-entries=auto 
-no such item
-```
+![mikrotik bridge id](/assets/img/posts/2025-02-12-mikrotik-terraform-getting-started/mikrotik-bridge-id.png)
+_Bridge Interface resource ID_
 
 From this output, we can see the ID is `*B`, so we need to import the bridge like so:
 
-```bash
-❯ terraform import routeros_interface_bridge.bridge "*B"
-routeros_interface_bridge.bridge: Importing from ID "*B"...
-routeros_interface_bridge.bridge: Import prepared!
-  Prepared routeros_interface_bridge for import
-routeros_interface_bridge.bridge: Refreshing state... [id=*B]
-
-Import successful!
-
-The resources that were imported are shown above. These resources are now in
-your Terraform state and will henceforth be managed by Terraform.
-```
+![terraform import bridge](/assets/img/posts/2025-02-12-mikrotik-terraform-getting-started/terraform-import-bridge.webp)
+_Importing the bridge interface in terraform_
 
 Almost every resource we create today will have to be imported since we are trying to take over the default configuration. From now on, to keep things a bit more concise, I will add the command to get the resource ID from Mikrotik in the initial code snippet and then add an `import` block in all my terraform configs.  
 This will make sure that I can just `terraform apply` my code and it will automatically import all of the resources and update them if needed.
@@ -240,34 +246,35 @@ This will make sure that I can just `terraform apply` my code and it will automa
 
 With the bridge imported, I can now move on to the bridge ports. Typically, one interface will be dedicated as a WAN port (in my case `ether1`), and then all other interfaces will be added to this bridge as part of the LAN network:
 
-```sh
-[admin@Mikrotik] > :put [/interface/bridge/port get [print show-ids]]
-Flags: I - INACTIVE; H - HW-OFFLOAD
-Columns: INTERFACE, BRIDGE, HW, PVID, PRIORITY, HORIZON
-*     INTERFACE     BRIDGE  HW   PVID  PRIORITY  HORIZON
-*0  H ether2        bridge  yes     1  0x80      none   
-*1  H ether3        bridge  yes     1  0x80      none   
-*2 IH ether4        bridge  yes     1  0x80      none   
-*3 IH ether5        bridge  yes     1  0x80      none   
-*4 IH ether6        bridge  yes     1  0x80      none   
-*5 IH ether7        bridge  yes     1  0x80      none   
-*6  H ether8        bridge  yes     1  0x80      none   
-*7 IH sfp-sfpplus1  bridge  yes     1  0x80      none   
-```
+![mikrotik bridge ports id](/assets/img/posts/2025-02-12-mikrotik-terraform-getting-started/mikrotik-bridge-port-ids.png)
+_Bridge Port resource IDs_
 
-In terraform terms, we can bundle together all bridge ports into a single resource with a `for_each` block to keep things a bit cleaner:
+In terraform terms, we can bundle together all bridge ports into a single resource with a `for_each` block to keep things a bit cleaner, both for the `import` part and for the actual resource definition:
 
 ```terraform
-# ...
+import {
+  for_each = {
+    "ether2"       = { id = "*0" }
+    "ether3"       = { id = "*1" }
+    "ether4"       = { id = "*2" }
+    "ether5"       = { id = "*3" }
+    "ether6"       = { id = "*4" }
+    "ether7"       = { id = "*5" }
+    "ether8"       = { id = "*6" }
+    "sfp-sfpplus1" = { id = "*7" }
+  }
+  to = routeros_interface_bridge_port.bridge_ports[each.key]
+  id = each.value.id
+}
 resource "routeros_interface_bridge_port" "bridge_ports" {
   for_each = {
-    "ether2" = { comment = "", pvid = "1" }
-    "ether3" = { comment = "", pvid = "1" }
-    "ether4" = { comment = "", pvid = "1" }
-    "ether5" = { comment = "", pvid = "1" }
-    "ether6" = { comment = "", pvid = "1" }
-    "ether7" = { comment = "", pvid = "1" }
-    "ether8" = { comment = "", pvid = "1" }
+    "ether2"       = { comment = "", pvid = "1" }
+    "ether3"       = { comment = "", pvid = "1" }
+    "ether4"       = { comment = "", pvid = "1" }
+    "ether5"       = { comment = "", pvid = "1" }
+    "ether6"       = { comment = "", pvid = "1" }
+    "ether7"       = { comment = "", pvid = "1" }
+    "ether8"       = { comment = "", pvid = "1" }
     "sfp-sfpplus1" = { comment = "", pvid = "1" }
   }
   bridge    = routeros_interface_bridge.bridge.name
@@ -290,21 +297,15 @@ By default, a Mikrotik router comes configured with two IP settings:
 
 The IDs for the resources can be exported using the following commands:
 
-```bash
-[admin@MikroTik] > export
-/ip address
-add address=192.168.88.1/24 comment=defconf interface=bridge network=192.168.88.0
-
-[admin@MikroTik] > export
-/ip dhcp-client add comment=defconf interface=ether1
-```
+![mikrotik ip addr ids](/assets/img/posts/2025-02-12-mikrotik-terraform-getting-started/mikrotik-ip-addr-ids.png)
+_IP Addresses resource IDs_
 
 And then we can create the resources in terraform and import them like so:
 
 ```terraform
 import {
   to = routeros_ip_address.lan
-  id = TODO
+  id = "*1"
 }
 resource "routeros_ip_address" "lan" {
   address   = "192.168.88.1/24"
@@ -314,12 +315,13 @@ resource "routeros_ip_address" "lan" {
 
 import {
   to = routeros_ip_dhcp_client.wan
-  id = TODO
+  id = "*1"
 }
 resource "routeros_ip_dhcp_client" "wan" {
   interface = "ether1"
 }
 ```
+{: file='ip-address.tf'}
 
 ### DHCP Server
 
@@ -336,49 +338,49 @@ Mikrotik routers come pre-configured with a DHCP server on the LAN network so th
 
 The default Mikrotik configuration for the DHCP server looks like this:
 
-```sh
-/ip pool
-add name=default-dhcp ranges=192.168.88.10-192.168.88.254
-
-/ip dhcp-server network
-add address=192.168.88.0/24 comment=defconf dns-server=192.168.88.1 gateway=192.168.88.1
-
-/ip dhcp-server
-add address-pool=default-dhcp interface=bridge name=defconf
-```
+![mikrotik dhcp server id](/assets/img/posts/2025-02-12-mikrotik-terraform-getting-started/mikrotik-dhcp-server-id.png)
+_DHCP-Server related resource IDs_
 
 Below is how you can mirror this setup in Terraform:
 
 ```terraform
+import {
+    to = routeros_ip_pool.dhcp
+    id = "*1"
+}
 resource "routeros_ip_pool" "dhcp" {
   name   = "default-dhcp"
   ranges = ["192.168.88.10-192.168.88.254"]
 }
 
+import {
+    to = routeros_ip_dhcp_server_network.dhcp
+    id = "*1"
+}
 resource "routeros_ip_dhcp_server_network" "dhcp" {
   address    = "192.168.88.0/24"
   gateway    = "192.168.88.1"
   dns_server = ["192.168.88.1"]
 }
 
+import {
+    to = routeros_ip_dhcp_server.defconf
+    id = "*1"
+}
 resource "routeros_ip_dhcp_server" "defconf" {
   name         = "defconf"
   address_pool = routeros_ip_pool.dhcp.name
   interface    = routeros_interface_bridge.bridge.name
 }
 ```
+{: file='dhcp-server.tf'}
 
 ### DNS
 
 Mikrotik routers include a built-in DNS server by default, allowing network clients to resolve domain names without needing an external DNS resolver. Additionally, a static DNS entry (router.lan) is created so that the router itself can be easily referenced within the LAN.
 
-```sh
-/ip dns
-set allow-remote-requests=yes
-
-/ip dns static
-add address=192.168.88.1 comment=defconf name=router.lan type=A
-```
+![mikrotik static dns id](/assets/img/posts/2025-02-12-mikrotik-terraform-getting-started/mikrotik-static-dns-id.png)
+_Static DNS Entry resource IDs_
 
 To mirror that in terraform, we need the following terraform code:
 
@@ -387,12 +389,18 @@ resource "routeros_dns" "dns-server" {
   allow_remote_requests = true
   servers = [ "1.1.1.1", "8.8.8.8" ]
 }
+
+import {
+  to = routeros_ip_dns_record.defconf
+  id = "*1"
+}
 resource "routeros_ip_dns_record" "defconf" {
   name    = "router.lan"
   address = "192.168.88.1"
   type    = "A"
 }
 ```
+{: file='dns.tf'}
 
 By default Mikrotik would use the DNS server configuration it received from DHCP. Do note that I am changing the upstream dns servers since I want to use `1.1.1.1` and `8.8.8.8`.
 
@@ -405,34 +413,41 @@ By default, Mikrotik creates two interface lists:
 1. **WAN:** Represents the external (internet-facing) interface.
 2. **LAN:** Represents the internal (local network) interfaces.
 
-Additionally, interfaces are assigned to these lists as follows:
-
-- The **bridge** interface (which includes LAN ports) is added to the `LAN` list.
-- The **ether1** interface (usually the WAN port) is added to the `WAN` list.
-
-```sh
-/interface list
-add comment=defconf name=WAN
-add comment=defconf name=LAN
-
-/interface list member
-add comment=defconf interface=bridge list=LAN
-add comment=defconf interface=ether1 list=WAN
-```
+![mikrotik interface lists id](/assets/img/posts/2025-02-12-mikrotik-terraform-getting-started/mikrotik-interface-list-id.png)
+_Interface List resource ID_
 
 To replicate this setup in Terraform, we need to define the interface lists and assign interfaces to them:
 
 ```terraform
 import {
   to = routeros_interface_list.wan
-  id = TODO
-}
-import {
-  to = routeros_interface_list_member.wan_ether1
-  id = TODO
+  id = "*2000010"
 }
 resource "routeros_interface_list" "wan" {
-  name    = "WAN"
+  name = "WAN"
+}
+import {
+  to = routeros_interface_list.lan
+  id = "*2000011"
+}
+resource "routeros_interface_list" "lan" {
+  name = "LAN"
+}
+```
+{: file='firewall.tf'}
+
+Additionally, interfaces are assigned to these lists as follows:
+
+- The **bridge** interface (which includes LAN ports) is added to the `LAN` list.
+- The **ether1** interface (usually the WAN port) is added to the `WAN` list.
+
+![mikrotik interface lists member id](/assets/img/posts/2025-02-12-mikrotik-terraform-getting-started/mikrotik-interface-list-member-id.png)
+_Interface List Member resource ID_
+
+```terraform
+import {
+  to = routeros_interface_list_member.wan_ether1
+  id = "*2"
 }
 resource "routeros_interface_list_member" "wan_ether1" {
   interface = "ether1"
@@ -440,21 +455,15 @@ resource "routeros_interface_list_member" "wan_ether1" {
 }
 
 import {
-  to = routeros_interface_list.lan
-  id = TODO
-}
-import {
   to = routeros_interface_list_member.lan_bridge
-  id = TODO
-}
-resource "routeros_interface_list" "lan" {
-  name    = "LAN"
+  id = "*1"
 }
 resource "routeros_interface_list_member" "lan_bridge" {
   interface = routeros_interface_bridge.bridge.name
   list      = routeros_interface_list.lan.name
 }
 ```
+{: file='firewall.tf'}
 
 These interface lists are particularly useful when configuring **firewall rules**. Instead of applying rules to individual interfaces, we can apply them to entire groups. This makes managing network security and policies much easier.
 
@@ -483,7 +492,12 @@ add action=drop chain=forward comment="defconf: drop invalid" connection-state=i
 add action=drop chain=forward comment="defconf: drop all from WAN not DSTNATed" connection-nat-state=!dstnat connection-state=new in-interface-list=WAN
 ```
 
-In order to import this ruleset in terraform, there would be a lot of import blocks or commands to run. Given that I currently don't have internet connectivity anyway, it will be much quicker and easier to just delete all firewall rules and then re-create them from terraform. Here is how those would look like:
+In order to import this ruleset in terraform, there would be a lot of import blocks or commands to run. Given that I currently don't have internet connectivity anyway, it will be much quicker and easier to just delete all firewall rules and then re-create them from terraform.
+
+![mikrotik delete all firewall rules](/assets/img/posts/2025-02-12-mikrotik-terraform-getting-started/mikrotik-delete-fw-rules.png)
+_Deleting all IPv4 firewall rules_
+
+And now to re-create them all in terraform, we need to add the following code to our `firewall.tf` file:
 
 ```terraform
 resource "routeros_ip_firewall_filter" "accept_established_related_untracked" {
@@ -493,7 +507,6 @@ resource "routeros_ip_firewall_filter" "accept_established_related_untracked" {
   connection_state = "established,related,untracked"
   place_before     = routeros_ip_firewall_filter.drop_invalid.id
 }
-
 resource "routeros_ip_firewall_filter" "drop_invalid" {
   action           = "drop"
   chain            = "input"
@@ -501,7 +514,6 @@ resource "routeros_ip_firewall_filter" "drop_invalid" {
   connection_state = "invalid"
   place_before     = routeros_ip_firewall_filter.accept_icmp.id
 }
-
 resource "routeros_ip_firewall_filter" "accept_icmp" {
   action       = "accept"
   chain        = "input"
@@ -509,7 +521,6 @@ resource "routeros_ip_firewall_filter" "accept_icmp" {
   protocol     = "icmp"
   place_before = routeros_ip_firewall_filter.capsman_accept_local_loopback.id
 }
-
 resource "routeros_ip_firewall_filter" "capsman_accept_local_loopback" {
   action       = "accept"
   chain        = "input"
@@ -517,7 +528,6 @@ resource "routeros_ip_firewall_filter" "capsman_accept_local_loopback" {
   dst_address  = "127.0.0.1"
   place_before = routeros_ip_firewall_filter.drop_all_not_lan.id
 }
-
 resource "routeros_ip_firewall_filter" "drop_all_not_lan" {
   action            = "drop"
   chain             = "input"
@@ -525,7 +535,6 @@ resource "routeros_ip_firewall_filter" "drop_all_not_lan" {
   in_interface_list = "!LAN"
   place_before      = routeros_ip_firewall_filter.accept_ipsec_policy_in.id
 }
-
 resource "routeros_ip_firewall_filter" "accept_ipsec_policy_in" {
   action       = "accept"
   chain        = "forward"
@@ -533,7 +542,6 @@ resource "routeros_ip_firewall_filter" "accept_ipsec_policy_in" {
   ipsec_policy = "in,ipsec"
   place_before = routeros_ip_firewall_filter.accept_ipsec_policy_out.id
 }
-
 resource "routeros_ip_firewall_filter" "accept_ipsec_policy_out" {
   action       = "accept"
   chain        = "forward"
@@ -541,7 +549,6 @@ resource "routeros_ip_firewall_filter" "accept_ipsec_policy_out" {
   ipsec_policy = "out,ipsec"
   place_before = routeros_ip_firewall_filter.fasttrack_connection.id
 }
-
 resource "routeros_ip_firewall_filter" "fasttrack_connection" {
   action           = "fasttrack-connection"
   chain            = "forward"
@@ -550,7 +557,6 @@ resource "routeros_ip_firewall_filter" "fasttrack_connection" {
   hw_offload       = "true"
   place_before     = routeros_ip_firewall_filter.accept_established_related_untracked_forward.id
 }
-
 resource "routeros_ip_firewall_filter" "accept_established_related_untracked_forward" {
   action           = "accept"
   chain            = "forward"
@@ -558,7 +564,6 @@ resource "routeros_ip_firewall_filter" "accept_established_related_untracked_for
   connection_state = "established,related,untracked"
   place_before     = routeros_ip_firewall_filter.drop_invalid_forward.id
 }
-
 resource "routeros_ip_firewall_filter" "drop_invalid_forward" {
   action           = "drop"
   chain            = "forward"
@@ -566,7 +571,6 @@ resource "routeros_ip_firewall_filter" "drop_invalid_forward" {
   connection_state = "invalid"
   place_before     = routeros_ip_firewall_filter.drop_all_wan_not_dstnat.id
 }
-
 resource "routeros_ip_firewall_filter" "drop_all_wan_not_dstnat" {
   action               = "drop"
   chain                = "forward"
@@ -576,6 +580,7 @@ resource "routeros_ip_firewall_filter" "drop_all_wan_not_dstnat" {
   in_interface_list    = "WAN"
 }
 ```
+{: file='firewall.tf'}
 
 > Not that, since ordering is important, we do have the `place_before` argument for each rule to ensure they end up in the correct order.
 {: .prompt-info }
@@ -586,24 +591,24 @@ There probably is a way to make this code more efficient/clean using a loop bloc
 
 Mikrotik routers use **NAT (Network Address Translation)** to allow devices on the internal network (LAN) to access the internet through the WAN interface. This is done using a **masquerade** rule, which dynamically translates private IP addresses into the router's public IP:
 
-```sh
-/ip firewall nat
-add action=masquerade chain=srcnat comment="defconf: masquerade" ipsec-policy=out,none out-interface-list=WAN
-```
+![mikrotik nat rule id](/assets/img/posts/2025-02-12-mikrotik-terraform-getting-started/mikrotik-nat-rule-id.png)
+_Firewall NAT resource ID_
 
 To replicate this setup in Terraform, define the resource:
 
 ```terraform
 import {
   to = routeros_ip_firewall_nat.masquerade
-  id = TODO
+  id = "*1"
 }
 resource "routeros_ip_firewall_nat" "masquerade" {
   chain              = "srcnat"
-  action            = "masquerade"
+  action             = "masquerade"
+  ipsec_policy       = "out,none"
   out_interface_list = routeros_interface_list.wan.name
 }
 ```
+{: file='firewall.tf'}
 
 ### IPv6 Rules (or Lack Thereof)
 
@@ -618,6 +623,7 @@ resource "routeros_ipv6_settings" "disable" {
   disable_ipv6 = "true"
 }
 ```
+{: file='ipv6.tf'}
 
 ### Miscellaneous Configurations
 
@@ -658,7 +664,26 @@ For a nice change of scenery here, these resources don't actually need to be imp
 
 ## Modifying the Default Config
 
-I mentioned in the introduction of this blog post that I want to make as few changes as possible to the default config in order to get internet access. I also mentioned a couple of time throughout this process that the default DHCP client on the WAN does not work for me. This is because my ISP uses PPPoE to assign me an IP address.
+I mentioned in the introduction of this blog post that I want to make as few changes as possible to the default config in order to get internet access. Well... I lied. I am also going to make 2 additions to this configuration that are not actually required but are things I typically do on any machine once I start managing it.
+
+### Basic System Settings
+
+Setting the hostname - or identity, as Mikrotik calls it - and the timezone of a machine are basic things I do every single time I get a new computer in my lab. Fortunately, the RouterOS API exposes these settings and the terraform provider implements them. I will set my hostname to `Router` (very clever, I know 😉) and the timezone to `Europe/Bucharest`:
+
+```tf
+resource "routeros_system_identity" "identity" {
+  name = "Router"
+}
+resource "routeros_system_clock" "timezone" {
+  time_zone_name       = "Europe/Bucharest"
+  time_zone_autodetect = false
+}
+```
+{: file='system.tf'}
+
+### PPPoE Config
+
+I mentioned a couple of time throughout this process that the default DHCP client on the WAN does not work for me. This is because my ISP uses PPPoE to assign me an IP address.
 
 This means that in order to get an IP address and be able to access the internet I first need to:
 
@@ -707,14 +732,13 @@ resource "routeros_interface_list_member" "pppoe_wan" {
   list      = routeros_interface_list.wan.name
 }
 ```
+{: file='pppoe.tf'}
 
 ## Wrapping Up
 
-At this point, I covered the basics and set up a fully functional, automated MikroTik configuration using Terraform. I can access the internet again and all of my config is defined as code. Let's run one glorious `terraform apply` command to see it all being imported at once, just for fun:
+At this point, I covered the basics and set up a fully functional, automated MikroTik configuration using Terraform. I can access the internet again and all of my config is defined as code. Let's run one glorious `terraform apply` command to see all resources being imported/created and/or updated:
 
-```bash
-TODO
-```
+![terraform apply](/assets/img/posts/2025-02-12-mikrotik-terraform-getting-started/the-big-apply.gif)
 
 ---
 
