@@ -5,7 +5,7 @@ ruby = "3.3"
 [tasks.dev]
 description = "Start a development server that also builds future posts."
 dir = "website"
-run = "bundle exec jekyll serve --incremental --future --drafts --livereload --force_polling"
+run = "bundle exec jekyll serve --incremental --future --drafts --livereload --force_polling --port=$(shuf --input-range=4000-10000 -n 1)"
 
 [tasks.build]
 description = "Build the website."
